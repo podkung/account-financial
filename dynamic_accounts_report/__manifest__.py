@@ -8,7 +8,7 @@
     "category": "Accounting",
     "license": "AGPL-3",
     "author": "Cybrosys Techno Solutions, Ecosoft",
-    "depends": ["account"],
+    "depends": ["account", "account_operating_unit"],
     "data": [
         "security/ir.model.access.csv",
         "data/account_financial_report_data.xml",
