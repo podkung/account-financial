@@ -250,6 +250,72 @@ class GeneralView(models.TransientModel):
         MoveLine = self.env["account.move.line"]
         move_lines = {x: [] for x in accounts.ids}
 
+        # Prepare initial sql query and Get the initial move lines
+        if init_balance and data.get("date_from"):
+            init_tables, init_where_clause, init_where_params = MoveLine.with_context(
+                date_from=self.env.context.get("date_from"), date_to=False,
+                initial_bal=True)._query_get()
+            init_wheres = [""]
+            if init_where_clause.strip():
+                init_wheres.append(init_where_clause.strip())
+            init_filters = " AND ".join(init_wheres)
+            filters = init_filters.replace("account_move_line__move_id",
+                                           "m").replace("account_move_line",
+                                                        "l")
+            new_filter = filters
+            if data["target_move"] == "posted":
+                new_filter += " AND m.state = 'posted'"
+            else:
+                new_filter += " AND m.state in ('draft', 'posted')"
+
+            if data.get("date_from"):
+                new_filter += " AND l.date < '%s'" % data.get("date_from")
+
+            if data["journals"]:
+                new_filter += " AND j.id IN %s" % str(tuple(data["journals"].ids) + tuple([0]))
+
+            if data.get("accounts"):
+                WHERE = "WHERE l.account_id IN %s" % str(tuple(data.get("accounts").ids) + tuple([0]))
+            else:
+                WHERE = "WHERE l.account_id IN %s"
+
+            if data.get("analytics"):
+                WHERE += " AND anl.id IN %s" % str(tuple(data.get("analytics").ids) + tuple([0]))
+
+            if data.get("analytic_tags"):
+                WHERE += " AND anltag.account_analytic_tag_id IN %s" % str(
+                    tuple(data.get("analytic_tags").ids) + tuple([0]))
+
+            if data["operating_units"]:
+                WHERE += " AND l.operating_unit_id IN %s" % str(
+                    tuple(data.get("operating_units").ids) + tuple([0])
+            )
+
+            sql = ("""SELECT 0 AS lid, l.account_id AS account_id, '' AS ldate, '' AS lcode, 0.0 AS amount_currency, '' AS lref, 'Initial Balance' AS lname, COALESCE(SUM(l.debit),0.0) AS debit, COALESCE(SUM(l.credit),0.0) AS credit, COALESCE(SUM(l.debit),0) - COALESCE(SUM(l.credit), 0) as balance, '' AS lpartner_id,\
+                        '' AS move_name, '' AS mmove_id, '' AS currency_code,\
+                        NULL AS currency_id,\
+                        '' AS invoice_id, '' AS invoice_type, '' AS invoice_number,\
+                        '' AS partner_name\
+                        FROM account_move_line l\
+                        LEFT JOIN account_move m ON (l.move_id=m.id)\
+                        LEFT JOIN res_currency c ON (l.currency_id=c.id)\
+                        LEFT JOIN res_partner p ON (l.partner_id=p.id)\
+                        LEFT JOIN account_move i ON (m.id =i.id)\
+                        LEFT JOIN account_account_tag_account_move_line_rel acc ON (acc.account_move_line_id=l.id)
+                        LEFT JOIN account_analytic_account anl ON (l.analytic_account_id=anl.id)
+                        LEFT JOIN account_analytic_tag_account_move_line_rel anltag ON (anltag.account_move_line_id=l.id)
+                        JOIN account_journal j ON (l.journal_id=j.id)"""
+                        + WHERE + new_filter + " GROUP BY l.account_id")
+            if data.get("accounts"):
+                params = tuple(init_where_params)
+            else:
+                params = (tuple(accounts.ids),) + tuple(init_where_params)
+            cr.execute(sql, params)
+
+            for row in cr.dictfetchall():
+                row["m_id"] = row["account_id"]
+                move_lines[row.pop("account_id")].append(row)
+
         # Prepare sql query base on selected parameters from wizard
         tables, where_clause, where_params = MoveLine._query_get()
         wheres = [""]
